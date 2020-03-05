@@ -1,136 +1,145 @@
+const botconfig = require("./config.json");
 const Discord = require("discord.js");
- 
-const bot = new Discord.Client();
- 
-const config = require("./config.json");
 const ytdl = require("ytdl-core");
- 
-const prefix  = config.prefix;
- 
-var queue = new Map();
- 
-bot.on("ready", () => {
-    console.log(`I am ready! I am in ${bot.guilds.size} guilds`);
- 
-    bot.user.setActivity(`Hello!`);
-});
- 
-bot.on("message", async message => {
-    if(message.author.bot) return;
-    if(message.content.indexOf(prefix) !== 0) return;
- 
-    const args = message.content.slice(prefix.length).trim().split(/ +/g);
-    const command = args.shift().toLowerCase();
- 
-    const serverQueue = queue.get(message.guild.id);
- 
-    if(command === 'hello') {
-        message.reply('Hello!');
-    }
- 
-    if(command === 'ping') {
-        const msg = await message.channel.send("Pinging...");
-        msg.edit(`Pong! Latency is ${msg.createdTimestamp - message.createdTimestamp}ms. API Latency is ${Math.round(bot.ping)}ms`);
-    }
- 
-    if(command === 'kick') {
-        if(!message.member.hasPermission("ADMINISTRATOR")) return message.reply('Sorry you do not have permission!');
-        let member = message.mentions.members.first() || message.guild.members.get(args[0]);
-        if(!member) return message.reply("Please mention a valid user");
-        if(!member.kickable) return message.channel.send("Sorry I cannot kick that person! Do they have a higher role?");
- 
-        let reason = args.slice(1).join(' ');
-        if(!reason) reason = "No reason provided";
- 
-        await member.kick(reason)
-            .catch(e => message.reply(`Sorry I couldn't kick them! Error: ${e}`));
-        message.reply(`:white_check_mark: User kicked!`);
-    }
- 
-    if(command === 'ban') {
-        if(!message.member.hasPermission("ADMINISTRATOR")) return message.reply('Sorry you do not have permission!');
-        let member = message.mentions.members.first() || message.guild.members.get(args[0]);
-        if(!member) return message.reply("Please mention a valid user");
-        if(!member.bannable) return message.channel.send("Sorry I cannot ban that person! Do they have a higher role?");
- 
-        let reason = args.slice(1).join(' ');
-        if(!reason) reason = "No reason provided";
- 
-        await member.ban(reason)
-            .catch(e => message.reply(`Sorry I couldn't ban them! Error: ${e}`));
-        message.reply(`:white_check_mark: User banned!`);
-    }
- 
-    if(command === 'play') {
-        // !play url
- 
-        play(message, serverQueue);
-    }
- 
-});
- 
-async function play(message, serverQueue) {
-    const args = message.content.split(" ");
- 
-    const voiceChannel = message.member.voiceChannel;
-    if(!voiceChannel) return message.reply("You must be in a voice channel!");
-    const permission = voiceChannel.permissionsFor(message.client.user);
-    if(!permission.has('CONNECT') || !permission.has("SPEAK")) {
-        return message.channel.send("I need permission to join and speak in your voice channel!")
-    }
- 
-    const songInfo = await ytdl.getInfo(args[1]);
-    const song = {
-        title: songInfo.title,
-        url: songInfo.video_url,
-    };
- 
-    if(!serverQueue) {
-        const queueConstruct = {
-            textChannel: message.channel,
-            voiceChannel: voiceChannel,
-            connection: null,
-            songs: [],
-            volume: 5,
-            playing: true,
-        };
-        queue.set(message.guild.id, queueConstruct);
- 
-        queueConstruct.songs.push(song);
- 
-        try{
-            var connection = await voiceChannel.join();
-            queueConstruct.connection = connection;
-            playSong(message.guild, queueConstruct.songs[0]);
-        } catch (err) {
-            console.log(err);
-            queue.delete(message.guild.id)
-            return message.channel.send("There was an error playing! " + err);
-        }
-    } else {
-        serverQueue.songs.push(song);
-        return message.channel.send(`${song.title} has been added to the queue!`);
-    }
+const ffmpeg = require("ffmpeg");
+
+const bot = new Discord.Client({ disableEveryone: true })
+
+const queue = new Map();
+
+function secondsToString(seconds) {
+	var days = Math.floor(seconds / 86400);
+	var hours = Math.floor((seconds % 86400) / 3600);
+	var minutes = Math.floor((seconds % 3600) / 60);
+	var seconds = Math.floor(seconds % 60);
+
+	var str = "";
+
+	if (days > 0) {
+		str += days + ":";
+	}
+	if (hours < 10) {
+		hours = "0" + hours;
+	}
+	if (minutes < 10) {
+		minutes = "0" + minutes;
+	}
+	if (seconds < 10) {
+		seconds = "0" + seconds;
+	}
+
+	str += hours + ":";
+	str += minutes + ":";
+	str += seconds;
+
+	return str;
 }
- 
-function playSong(guild, song) {
-    const serverQueue = queue.get(guild.id);
- 
-    if(!song) {
-        serverQueue.voiceChannel.leave();
-        queue.delete(guild.id);
-        return;
-    }
- 
-    const dispatcher = serverQueue.connection.playStream(ytdl(song.url))
-        .on('end', () => {
-            serverQueue.songs.shift();
-            playSong(guild, serverQueue.songs[0]);
-        })
-        .on('error', error => {
-            console.log(error);
-        })
-    dispatcher.setVolumeLogarithmic(serverQueue.volume / 5);
+
+bot.on("ready", async () => {
+	console.log(`${bot.user.username} is online!`)
+  let prefix = botconfig.prefix;
+	bot.user.setActivity(`${prefix}help`)
+});
+
+bot.on("message", async message => {
+	if (message.author.bot) return;
+	if (message.channel.type == "dm") return;
+
+	let prefix = botconfig.prefix;
+	let messageArray = message.content.split(" ");
+	let cmd = messageArray[0];
+	let args = messageArray.slice(1);
+
+	if (cmd === `${prefix}ping`) {
+		return message.channel.send(":ping_pong: Pong!")
+	}
+	if (cmd === `${prefix}help`) {
+		return message.channel.send("Sorry, this command isn't ready yet.");
+	}
+	if (cmd === `${prefix}uptime`) return message.channel.send(secondsToString(process.uptime()));
+
+
+	//music part
+
+
+	//Optimization needed
+	const serverQueue = queue.get(message.guild.id);
+	if (cmd === `${prefix}play`) {
+		const voiceChannel = message.member.voiceChannel;
+		if (!voiceChannel) return;
+		const permissions = voiceChannel.permissionsFor(message.client.user)
+		if (!permissions.has("CONNECT")) return;
+		if (!permissions.has("SPEAK")) return;
+
+		const songInfo = await ytdl.getInfo(args[0]);
+
+		const song = {
+			title: songInfo.title,
+			url: songInfo.video_url
+		};
+
+		if (!serverQueue) {
+			const queueConstruct = {
+				textChannel: message.channel,
+				voiceChannel: voiceChannel,
+				connection: null,
+				songs: [],
+				volume: 5,
+				playing: true
+			};
+			queue.set(message.guild.id, queueConstruct);
+			queueConstruct.songs.push(song);
+			try {
+				var connection = await voiceChannel.join();
+				queueConstruct.connection = connection;
+				play(message.guild, queueConstruct.songs[0]);
+			} catch (error) {
+				console.error(`I was unable to join the voice channel ${voiceChannel}, the error is : ${error}`);
+				return;
+			}
+		} else {
+			serverQueue.songs.push(song);
+			return;
+		}
+
+		return;
+
+		
+	}
+	if (cmd === `${prefix}stop`) {
+		if (!message.member.voiceChannel) return;
+		message.member.voiceChannel.leave();
+		message.channel.send("Player stopped.");
+		return;
+	}
+
+	if (cmd === `${prefix}skip`) {
+		if (!serverQueue) return message.channel.send(`I could not skip anything.`);
+		serverQueue.connection.dispatcher.end();
+		return;
+	}
+});
+
+//Always on music :
+function play(guild,song) {
+	const serverQueue = queue.get(guild.id);
+
+	if (!song) {
+		serverQueue.voiceChannel.leave();
+		queue.delete(guild.id);
+		return;
+	}
+
+	const dispatcher = serverQueue.connection.playStream(ytdl(song.url))
+		.on('end', () => {
+			console.log(`song ended`);
+			serverQueue.songs.shift();
+			play(guild, serverQueue.songs[0]);
+			return;
+		})
+		.on('error', error => console.error(error));
+
+	dispatcher.setVolumeLogarithmic(5 / 5);
 }
 
 bot.login(process.env.BOT_TOKEN);

@@ -1,126 +1,416 @@
-const Discord = require('discord.js');
-const {
-	prefix,
-	token,
-} = require('./config.json');
-const ytdl = require('ytdl-core');
-
+const botSettings = require("./config.json");
+const Discord = require("discord.js");
+const RichEmbed = require("discord.js");
+const { Client, Util } = require('discord.js');
 const client = new Discord.Client();
+const axios = require("axios");
+const yt = require("ytdl-core");
+const YouTube = require("simple-youtube-api");
+const fs = require("fs");
+const getYTID = require("get-youtube-id");
+const fetchVideoInfo = require("youtube-info");
+const child_process = require("child_process");//
+const prefix = botSettings.prefix;
+const ytApiKey = botSettings.ytApiKey;
+const youtube = new YouTube(ytApiKey);
 
-const queue = new Map();
+const express = require('express');
+const app = express();
+const http = require('http');
+app.get("/", (request, response) => { //
+  response.sendStatus(200);
+});
+app.listen(process.env.PORT);
+setInterval(() => {
+  http.get(`http://z-music2.glitch.me/`);
+}, 280000);
 
-client.once('ready', () => {
-	console.log('Ready!');
+const bot = new Discord.Client({
+    disableEveryone: true
+});
+client.on('ready',  () => {
+    console.log(`Logged in as * [ " ${client.user.username} " ] servers! [ " ${client.guilds.size} " ]`);
+    console.log(`Logged in as * [ " ${client.user.username} " ] Users! [ " ${client.users.size} " ]`);
+    console.log(`Logged in as * [ " ${client.user.username} " ] channels! [ " ${client.channels.size} " ]`);
+  });
+client.on('ready', async () => {
+    console.log('I am ready!');
+
+
 });
 
-client.once('reconnecting', () => {
-	console.log('Reconnecting!');
+/* MUSIC VARIABLES */
+let queue = []; // Songs queue
+let songsQueue = []; // Song names stored for queue command
+let isPlaying = false; // Is music playing
+let dispatcher = null;
+let voiceChannel = null;
+let skipRequest = 0; // Stores the number of skip requests 
+let skippers = []; // Usernames of people who voted to skip the song
+let ytResultList = []; // Video names results from yt command
+let ytResultAdd = []; // For storing !add command choice
+/* MUSIC VARIABLES END */
+let re = /^(?:[1-5]|0[1-5]|10)$/; // RegEx for allowing only 1-5 while selecting song from yt results
+let regVol = /^(?:([1][0-9][0-9])|200|([1-9][0-9])|([0-9]))$/; // RegEx for volume control
+let youtubeSearched = false; // If youtube has been searched (for !add command)
+let selectUser; // Selecting user from guild
+
+bot.on("ready", async () => {
+    console.log(`Bot is ready! ${bot.user.username}`);
+
+    /*try {
+        let link = await bot.generateInvite(["ADMINISTRATOR"]);
+        console.log(link);
+    } catch (e) {
+        console.log(e.stack);
+    }*/
+
 });
 
-client.once('disconnect', () => {
-	console.log('Disconnect!');
+bot.on("message", async message => {
+    if (message.author.bot) return;
+    if (message.channel.type === "dm") return;
+
+    let messageContent = message.content.split(" ");
+    let command = messageContent[0];
+    let args = messageContent.slice(1);
+
+    if (!command.startsWith(prefix)) return;
+
+    switch (command.slice(1).toLowerCase()) {
+        case "userinfo":
+if (args.length == 0) { // Displays the message author info if args are empty
+    let embed = new Discord.RichEmbed()
+        .setThumbnail(message.author.avatarURL)
+        .setColor("#8A2BE2")
+        .setDescription(`User info for: **${message.author.username}**`)
+        .addField("Avatar:", `[Link](${message.author.avatarURL})`, true)
+        .addField("Status:", message.author.presence.status, true)
+        .addField("Bot: ", message.author.bot, true)
+        .addField("In game: ", message.author.presence.game ? message.author.presence.game : "Not in game", true)
+        .addField("Tag: ", message.author.tag, true)
+        .addField("Discriminator:", message.author.discriminator, true)
+        .addBlankField()
+        .setFooter(`Profile created at: ${message.author.createdAt}`);
+
+    message.channel.send(embed);
+} else { // Else displays info of user from args
+    if (message.guild.available) {
+        let selectUser = message.guild.member(message.mentions.users.first() || message.guild.members.get(args[0]));
+        let embed = new Discord.RichEmbed()
+.setThumbnail(selectUser.user.displayAvatarURL)
+.setColor("#8A2BE2")
+.setDescription(`User info for: **${selectUser.user.username}**`)
+.addField("Avatar:", `[Link](${selectUser.user.displayAvatarURL})`, true)
+.addField("Status:", selectUser.user.presence.status, true)
+.addField("Bot: ", selectUser.user.bot, true)
+.addField("In game: ", selectUser.user.presence.game ? selectUser.user.presence.game : "Not in game", true)
+.addField("Tag: ", selectUser.user.tag, true)
+.addField("Discriminator:", selectUser.user.discriminator, true)
+.addBlankField()
+.setFooter(`Profile created at: ${selectUser.user.createdAt}`);
+
+        message.channel.send(embed);
+    }
+}
+break;
+
+        case "play":
+if (args.length == 0 && queue.length > 0) {
+    if (!message.member.voiceChannel) {
+        message.reply("**You Need To Be in a Voice Channel To Play Music. Please, Join One And Try Again.**");
+    } else {
+        isPlaying = true;
+        playMusic(queue[0], message);
+        message.reply(`Now Playing **${songsQueue[0]}**:musical_note:  `);
+    }
+} else if (args.length == 0 && queue.length == 0) {
+    message.reply(`**Queue is Empty Now, type ${prefix}play [song name] or ${prefix}yt [song name] to play/search new songs!**`);
+} else if (queue.length > 0 || isPlaying) {
+    getID(args).then(id => {
+        if (id) {
+queue.push(id);
+getYouTubeResultsId(args, 1).then(ytResults => {
+    message.reply(`added To Queue **${ytResults[0]}**:notes:`);
+    songsQueue.push(ytResults[0]);
+}).catch(error => console.log(error));
+        } else {
+message.reply("Sorry, Couldn't find The Song.");
+        }
+    }).catch(error => console.log(error));
+} else {
+    isPlaying = true;
+    getID(args).then(id => {
+        if (id) {
+queue.push(id);
+playMusic(id, message);
+getYouTubeResultsId(args, 1).then(ytResults => {
+    message.reply(`Now Playing **${ytResults[0]}**:musical_note:`);
+    songsQueue.push(ytResults[0]);
+}).catch(error => console.log(error));
+        } else {
+message.reply("Sorry, Couldn't Find The Song.");
+        }
+    }).catch(error => console.log(error));
+}
+break;
+
+        case "skip":
+console.log(queue);
+if (queue.length === 1) {
+    message.reply(`**queue is empty now, type ${prefix}play [song name] or ${prefix}yt [song name] to play/search new songs!**`);
+    dispatcher.end();
+    setTimeout(() => voiceChannel.leave(), 1000);
+} else {
+    if (skippers.indexOf(message.author.id) === -1) {
+        skippers.push(message.author.id);
+        skipRequest++;
+
+        if (skipRequest >= Math.ceil((voiceChannel.members.size - 1) / 2)) {
+skipSong(message);
+message.reply("**Your Skip has Been Added To The List. Skipping!**");
+        } else {
+message.reply(`Your Skip has Been Added to the list. You need **${Math.ceil((voiceChannel.members.size - 1) / 2) - skipRequest}** more to skip current song!`);
+        }
+    } else {
+        message.reply("**You Already Voted To Skip!**");
+    }
+}
+break;
+
+        case "queue":
+if (queue.length === 0) { // if there are no songs in the queue, send message that queue is empty
+    message.reply(`**Queue is empty, type ${prefix}play or ${prefix}yt to play/search new songs!**`);
+} else if (args.length > 0 && args[0] == 'remove') { // if arguments are provided and first one is remove
+    if (args.length == 2 && args[1] <= queue.length) { // check if there are no more than 2 arguments and that second one is in range of songs number in queue
+        // then remove selected song from the queue
+        message.reply(`**${songsQueue[args[1] - 1]}** has been removed from the queue. Type !queue to see the current queue.`);
+        queue.splice(args[1] - 1, 1);
+        songsQueue.splice(args[1] - 1, 1);
+    } else { // if there are more than 2 arguments and the second one is not in the range of songs number in queue, send message
+        message.reply(`**You Need To Enter Valid Queued Song number **(1-${queue.length}).`);
+    }
+} else if (args.length > 0 && args[0] == 'clear') { // same as remove, only clears queue if clear is first argument
+    if (args.length == 1) {
+        // reseting queue and songsQueue, but leaving current song
+        message.reply(`all upcoming songs have been removed from the queue. type ${prefix}play or ${prefix}yt to play/search new songs!`);
+        queue.splice(1);
+        songsQueue.splice(1);
+    } else {
+        message.reply("**You need to type !queue clear without following arguments.**");
+    }
+} else if (args.length > 0 && args[0] == 'shuffle') {
+    let tempA = [songsQueue[0]];
+    let tempB = songsQueue.slice(1);
+    songsQueue = tempA.concat(shuffle(tempB));
+    message.channel.send("Queue has been shuffled. Type !queue to see the new queue!");
+} else { // if there are songs in the queue and queue commands is without arguments display current queue
+    let format = "```"
+    for (const songName in songsQueue) {
+        if (songsQueue.hasOwnProperty(songName)) {
+let temp = `${parseInt(songName) + 1}: ${songsQueue[songName]} ${songName == 0 ? "**(Current Song)**" : ""}\n`;
+if ((format + temp).length <= 2000 - 3) {
+    format += temp;
+} else {
+    format += "```";
+    message.channel.send(format);
+    format = "```";
+}
+        }
+    }
+    format += "```";
+    message.channel.send(format);
+}
+break;
+
+        case "loop":
+if (isPlaying) {
+    queue.splice(1, 0, queue[0]);
+    songsQueue.splice(1, 0, songsQueue[0]);
+    message.reply(`**${songsQueue[0]}** Will be played again.`);
+}
+break;
+
+        case "stop":
+dispatcher.end();
+setTimeout(() => voiceChannel.leave(), 1000);
+break;
+
+
+
+        case "vol":
+if (args.length == 0 && dispatcher) {
+    message.reply(`current volume is ${dispatcher.volume}. Type !vol [percentage - 0 to 200] to set music volume.`);
+} else if (args.length > 0 && regVol.test(args) == true && dispatcher) {
+    dispatcher.setVolume(args * 0.01);
+    message.reply(`music volume has been set to ${args}%.`);
+    console.log(dispatcher.volume);
+} else if (!regVol.test(args) && dispatcher) {
+    message.reply("you need to enter a number in 0-200 range.");
+} else {
+    message.reply("you can only set music volume if music is playing.");
+}
+break;
+
+
+
+
+
+    }
 });
 
-client.on('message', async message => {
-	if (message.author.bot) return;
-	if (!message.content.startsWith(prefix)) return;
+/*--------------------------------*/
+/* MUSIC CONTROL FUNCTIONS START */
+/*------------------------------*/
+function playMusic(id, message) {
+    voiceChannel = message.member.voiceChannel;
 
-	const serverQueue = queue.get(message.guild.id);
+    voiceChannel.join()
+        .then(connection => {
+console.log("Connected...");
+stream = yt(`https://www.youtube.com/watch?v=${id}`, {
+    filter: 'audioonly'
+})
 
-	if (message.content.startsWith(`${prefix}play`)) {
-		execute(message, serverQueue);
-		return;
-	} else if (message.content.startsWith(`${prefix}skip`)) {
-		skip(message, serverQueue);
-		return;
-	} else if (message.content.startsWith(`${prefix}stop`)) {
-		stop(message, serverQueue);
-		return;
-	} else {
-		message.channel.send('You need to enter a valid command!')
-	}
+skipRequest = 0;
+skippers = [];
+
+dispatcher = connection.playStream(stream);
+dispatcher.setVolume(0.25);
+dispatcher.on('end', () => {
+    skipRequest = 0;
+    skippers = [];
+    queue.shift();
+    songsQueue.shift();
+    if (queue.length === 0) {
+        console.log("Disconnected...");
+    voiceChannel.leave()
+        queue = [];
+        songsQueue = [];
+        isPlaying = false;
+    } else {
+        setTimeout(() => playMusic(queue[0], message), 500);
+    }
 });
-
-async function execute(message, serverQueue) {
-	const args = message.content.split(' ');
-
-	const voiceChannel = message.member.voiceChannel;
-	if (!voiceChannel) return message.channel.send('You need to be in a voice channel to play music!');
-	const permissions = voiceChannel.permissionsFor(message.client.user);
-	if (!permissions.has('CONNECT') || !permissions.has('SPEAK')) {
-		return message.channel.send('I need the permissions to join and speak in your voice channel!');
-	}
-
-	const songInfo = await ytdl.getInfo(args[1]);
-	const song = {
-		title: songInfo.title,
-		url: songInfo.video_url,
-	};
-
-	if (!serverQueue) {
-		const queueContruct = {
-			textChannel: message.channel,
-			voiceChannel: voiceChannel,
-			connection: null,
-			songs: [],
-			volume: 5,
-			playing: true,
-		};
-
-		queue.set(message.guild.id, queueContruct);
-
-		queueContruct.songs.push(song);
-
-		try {
-			var connection = await voiceChannel.join();
-			queueContruct.connection = connection;
-			play(message.guild, queueContruct.songs[0]);
-		} catch (err) {
-			console.log(err);
-			queue.delete(message.guild.id);
-			return message.channel.send(err);
-		}
-	} else {
-		serverQueue.songs.push(song);
-		console.log(serverQueue.songs);
-		return message.channel.send(`${song.title} has been added to the queue!`);
-	}
-
+        })
+        .catch(error => console.log(error));
 }
 
-function skip(message, serverQueue) {
-	if (!message.member.voiceChannel) return message.channel.send('You have to be in a voice channel to stop the music!');
-	if (!serverQueue) return message.channel.send('There is no song that I could skip!');
-	serverQueue.connection.dispatcher.end();
+async function getID(str) {
+    if (str.indexOf("youtube.com") > -1) {
+        return getYTID(str);
+    } else {
+        let body = await axios(`https://www.googleapis.com/youtube/v3/search?part=id&type=video&q=${encodeURIComponent(str)}&key=${ytApiKey}`);
+        if (body.data.items[0] === undefined) {
+return null;
+        } else {
+return body.data.items[0].id.videoId;
+        }
+    }
 }
 
-function stop(message, serverQueue) {
-	if (!message.member.voiceChannel) return message.channel.send('You have to be in a voice channel to stop the music!');
-	serverQueue.songs = [];
-	serverQueue.connection.dispatcher.end();
+function addToQueue(strID) {
+    if (strID.indexOf("youtube.com")) {
+        queue.push(getYTID(strID));
+    } else {
+        queue.push(strID);
+        songsQueue.push(strID);
+    }
 }
 
-function play(guild, song) {
-	const serverQueue = queue.get(guild.id);
+function skipSong(message) {
+    dispatcher.end();
+}
+/*------------------------------*/
+/* MUSIC CONTROL FUNCTIONS END */
+/*----------------------------*/
 
-	if (!song) {
-		serverQueue.voiceChannel.leave();
-		queue.delete(guild.id);
-		return;
-	}
-
-	const dispatcher = serverQueue.connection.playStream(ytdl(song.url))
-		.on('end', () => {
-			console.log('Music ended!');
-			serverQueue.songs.shift();
-			play(guild, serverQueue.songs[0]);
-		})
-		.on('error', error => {
-			console.error(error);
-		});
-	dispatcher.setVolumeLogarithmic(serverQueue.volume / 5);
+/*----------------------------------*/
+/* YOUTUBE CONTROL FUNCTIONS START */
+/*--------------------------------*/
+async function searchYouTube(str) {
+    let search = await axios(`https://www.googleapis.com/youtube/v3/search?part=id&type=video&q=${encodeURIComponent(str)}&key=${ytApiKey}`);
+    if (search.data.items[0] === undefined) {
+        return null;
+    } else {
+        return search.data.items;
+    }
 }
 
-// THIS  MUST  BE  THIS  WAY
+async function getYouTubeResultsId(ytResult, numOfResults) {
+    let resultsID = [];
+    await youtube.searchVideos(ytResult, numOfResults)
+        .then(results => {
+for (const resultId of results) {
+    resultsID.push(resultId.title);
+}
+        })
+        .catch(err => console.log(err));
+    return resultsID;
+}
+/*--------------------------------*/
+/* YOUTUBE CONTROL FUNCTIONS END */
+/*------------------------------*/
+
+/*-----------------------*/
+/* MISC FUNCTIONS START */
+/*---------------------*/
+function shuffle(queue) {
+    for (let i = queue.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [queue[i], queue[j]] = [queue[j], queue[i]];
+    }
+    return queue;
+}
+/*---------------------*/
+/* MISC FUNCTIONS END */
+/*-------------------*/
+const devs = ["523836549390139392"]
+
+const adminprefix = ".=.";
+client.on('message', message => {
+    var argresult = message.content.split(` `).slice(1).join(' ');
+      if (!devs.includes(message.author.id)) return;
+
+  if (message.content.startsWith(adminprefix + 'ply')) {
+    client.user.setGame(argresult);
+      message.channel.sendMessage(`**:white_check_mark:   ${argresult}**`)
+  } else 
+    if (message.content === (adminprefix + "Percie")) {
+    message.guild.leave();        
+  } else  
+  if (message.content.startsWith(adminprefix + 'wt')) {
+  client.user.setActivity(argresult, {type:'WATCHING'});
+      message.channel.sendMessage(`**:white_check_mark:   ${argresult}**`)
+  } else 
+  if (message.content.startsWith(adminprefix + 'ls')) {
+  client.user.setActivity(argresult , {type:'LISTENING'});
+      message.channel.sendMessage(`**:white_check_mark:   ${argresult}**`)
+  } else     
+    if (message.content.startsWith(adminprefix + 'setname')) {
+  client.user.setUsername(argresult).then
+      message.channel.sendMessage(`**${argresult}** : Done :>`)
+  return message.reply("**You Can't Change Your Name ,Only After Two Hours :>**");
+  } else
+    if (message.content.startsWith(adminprefix + 'setavatar')) {
+  client.user.setAvatar(argresult);
+    message.channel.sendMessage(`**${argresult}** : تم تغير صورة البوت`);
+        } else     
+  if (message.content.startsWith(adminprefix + 'st')) {
+    client.user.setGame(argresult, "https://www.twitch.tv/idk");
+      message.channel.sendMessage(`**:white_check_mark:   ${argresult}**`)
+  }
+    if(message.content === adminprefix + "restart") {
+      if (!devs.includes(message.author.id)) return;
+          message.channel.send(`:warning:️ **Bot restarting by ${message.author.username}**`);
+        console.log("\n\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
+        console.log(`⚠️ Bot restarting... ⚠️`);
+        console.log("===============================================\n\n");
+        client.destroy();
+        child_process.fork(__dirname + "/bot.js");
+        console.log(`Bot Successfully Restarted`);
+    }
+
+  });
 
 client.login(process.env.BOT_TOKEN);
